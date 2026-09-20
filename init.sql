@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS wallets (
 
 CREATE TABLE IF NOT EXISTS transactions (
     id SERIAL PRIMARY KEY,
-    request_id UUID,
+    request_id UUID NOT NULL UNIQUE,
     operation VARCHAR(20) NOT NULL,
     from_wallet UUID,
     to_wallet UUID,

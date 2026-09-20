@@ -11,7 +11,7 @@ import (
 )
 
 type DepositRequest struct {
-	RequestID string    `json:"request_id"`
+	RequestID uuid.UUID `json:"request_id"`
 	WalletID  uuid.UUID `json:"wallet_id"`
 	Amount    float64   `json:"amount"`
 	Currency  string    `json:"currency"`
@@ -22,6 +22,11 @@ func HandleDeposit(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
 		var req DepositRequest
 		if err := json.Unmarshal(msg.Data, &req); err != nil {
 			fmt.Println("deposit: bad payload:", err)
+			return
+		}
+
+		if req.RequestID == uuid.Nil || req.WalletID == uuid.Nil {
+			fmt.Println("deposit: bad request_id or wallet_id")
 			return
 		}
 
@@ -36,17 +41,12 @@ func HandleDeposit(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
 			return
 		}
 
-		if err := store.Deposit(req.WalletID, req.Amount, currency); err != nil {
+		if err := store.Deposit(req.RequestID, req.WalletID, req.Amount, currency); err != nil {
 			fmt.Println("deposit failed:", err)
 			publishFailed(nc, req.RequestID, "deposit", err.Error())
 			return
 		}
 
 		publishCompleted(nc, req.RequestID, "deposit")
-
-		toWallet := req.WalletID
-		if err := store.RecordTransaction(req.RequestID, "deposit", nil, &toWallet, req.Amount, currency, "completed"); err != nil {
-			fmt.Println("deposit: failed to record transaction:", err)
-		}
 	}
 }

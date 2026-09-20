@@ -9,6 +9,42 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestIdempotentDeposit(t *testing.T) {
+	store := newTestStore(t)
+	walletID := uuid.MustParse("00000000-0000-0000-0000-000000000000")
+	currency := "USD"
+
+	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 0, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 100", walletID, currency)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, walletID)
+	})
+
+	requestID := uuid.New()
+
+	err = store.Deposit(requestID, walletID, 100, currency)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.Deposit(requestID, walletID, 100, currency)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	balances, err := store.GetWalletBalances(walletID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if balances[currency] != 100 {
+		t.Fatalf("expected 100 balance, got %f", balances[currency])
+	}
+}
+
 func TestConcurrentWithdraw(t *testing.T) {
 	store := newTestStore(t)
 
@@ -47,7 +83,7 @@ func TestConcurrentWithdraw(t *testing.T) {
 
 	for range 2 {
 		wg.Go(func() {
-			results <- store.Withdraw(walletID, 80, currency)
+			results <- store.Withdraw(uuid.New(), walletID, 80, currency)
 		})
 	}
 
@@ -140,7 +176,7 @@ func TestConcurrentTransfer(t *testing.T) {
 
 	for range 2 {
 		wg.Go(func() {
-			results <- store.Transfer(srcWallet, dstWallet, 80, currency)
+			results <- store.Transfer(uuid.New(), srcWallet, dstWallet, 80, currency)
 		})
 	}
 
@@ -230,7 +266,7 @@ func TestSuccessfulTransfer(t *testing.T) {
 		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
 	})
 
-	if err := store.Transfer(srcWallet, dstWallet, 100, currency); err != nil {
+	if err := store.Transfer(uuid.New(), srcWallet, dstWallet, 100, currency); err != nil {
 		t.Fatal(err)
 	}
 
@@ -275,7 +311,7 @@ func TestInsufficientFundsForTransfer(t *testing.T) {
 		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
 	})
 
-	err = store.Transfer(srcWallet, dstWallet, 200, currency)
+	err = store.Transfer(uuid.New(), srcWallet, dstWallet, 200, currency)
 
 	if err == nil {
 		t.Fatal("expected insufficient funds error")
@@ -317,7 +353,7 @@ func TestInsufficientFundsWithAnotherCurrencyForTransfer(t *testing.T) {
 		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
 	})
 
-	err = store.Transfer(srcWallet, dstWallet, 200, "EUR")
+	err = store.Transfer(uuid.New(), srcWallet, dstWallet, 200, "EUR")
 
 	if err == nil {
 		t.Fatal("expected insufficient funds error")

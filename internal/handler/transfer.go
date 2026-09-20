@@ -11,7 +11,7 @@ import (
 )
 
 type TransferRequest struct {
-	RequestID    string    `json:"request_id"`
+	RequestID    uuid.UUID `json:"request_id"`
 	FromWalletID uuid.UUID `json:"from_wallet_id"`
 	ToWalletID   uuid.UUID `json:"to_wallet_id"`
 	Amount       float64   `json:"amount"`
@@ -26,6 +26,11 @@ func HandleTransfer(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
 			return
 		}
 
+		if req.RequestID == uuid.Nil || req.FromWalletID == uuid.Nil || req.ToWalletID == uuid.Nil {
+			fmt.Println("transfer: bad request_id or wallet_id")
+			return
+		}
+
 		if err := validateAmount(req.Amount); err != nil {
 			fmt.Println("transfer: bad amount:", err)
 			return
@@ -37,16 +42,12 @@ func HandleTransfer(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
 			return
 		}
 
-		if err := store.Transfer(req.FromWalletID, req.ToWalletID, req.Amount, currency); err != nil {
+		if err := store.Transfer(req.RequestID, req.FromWalletID, req.ToWalletID, req.Amount, currency); err != nil {
 			fmt.Println("transfer failed:", err)
 			publishFailed(nc, req.RequestID, "transfer", err.Error())
 			return
 		}
 
 		publishCompleted(nc, req.RequestID, "transfer")
-
-		if err := store.RecordTransaction(req.RequestID, "transfer", &req.FromWalletID, &req.ToWalletID, req.Amount, currency, "completed"); err != nil {
-			fmt.Println("transfer: failed to record transaction:", err)
-		}
 	}
 }

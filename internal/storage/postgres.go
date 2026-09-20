@@ -54,26 +54,53 @@ func (s *Store) GetWalletBalances(walletID uuid.UUID) (map[string]float64, error
 	return balances, nil
 }
 
-func (s *Store) RecordTransaction(requestID, operation string, fromWallet, toWallet *uuid.UUID, amount float64, currency string, status string) error {
-	_, err := s.DB.Exec(
-		`INSERT INTO transactions (request_id, operation, from_wallet, to_wallet, amount, currency, status) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		requestID, operation, fromWallet, toWallet, amount, currency, status,
-	)
-	return err
-}
+func (s *Store) Deposit(requestID, walletID uuid.UUID, amount float64, currency string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
-func (s *Store) Deposit(walletID uuid.UUID, amount float64, currency string) error {
-	_, err := s.DB.Exec(`
+	alreadyProcessed, err := s.recordTransaction(tx, requestID, "deposit", nil, &walletID, amount, currency, "completed")
+	if err != nil {
+		return err
+	}
+
+	if alreadyProcessed {
+		return nil
+	}
+
+	_, err = tx.Exec(`
 		INSERT INTO wallets (wallet_id, balance, currency)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (wallet_id, currency)
 		DO UPDATE SET balance = wallets.balance + EXCLUDED.balance, updated_at = NOW()
 	`, walletID, amount, currency)
-	return err
+
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
-func (s *Store) Withdraw(walletID uuid.UUID, amount float64, currency string) error {
-	result, err := s.DB.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND currency = $3 AND balance >= $1", amount, walletID, currency)
+func (s *Store) Withdraw(requestID, walletID uuid.UUID, amount float64, currency string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	alreadyProcessed, err := s.recordTransaction(tx, requestID, "withdraw", &walletID, nil, amount, currency, "completed")
+	if err != nil {
+		return err
+	}
+
+	if alreadyProcessed {
+		return nil
+	}
+
+	result, err := tx.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND currency = $3 AND balance >= $1", amount, walletID, currency)
 	if err != nil {
 		return err
 	}
@@ -87,10 +114,10 @@ func (s *Store) Withdraw(walletID uuid.UUID, amount float64, currency string) er
 		return fmt.Errorf("insufficient funds")
 	}
 
-	return nil
+	return tx.Commit()
 }
 
-func (s *Store) Transfer(fromWallet, toWallet uuid.UUID, amount float64, currency string) error {
+func (s *Store) Transfer(requestID, fromWallet, toWallet uuid.UUID, amount float64, currency string) error {
 	if fromWallet == toWallet {
 		return fmt.Errorf("cannot transfer to the same wallet")
 	}
@@ -100,6 +127,15 @@ func (s *Store) Transfer(fromWallet, toWallet uuid.UUID, amount float64, currenc
 		return err
 	}
 	defer tx.Rollback()
+
+	alreadyProcessed, err := s.recordTransaction(tx, requestID, "transfer", &fromWallet, &toWallet, amount, currency, "completed")
+	if err != nil {
+		return err
+	}
+
+	if alreadyProcessed {
+		return nil
+	}
 
 	rows, err := tx.Query("SELECT wallet_id, balance FROM wallets WHERE wallet_id IN($1, $2) AND currency = $3 ORDER BY wallet_id FOR UPDATE", fromWallet, toWallet, currency)
 	if err != nil {
@@ -145,6 +181,7 @@ func (s *Store) Transfer(fromWallet, toWallet uuid.UUID, amount float64, currenc
 	if err != nil {
 		return err
 	}
+
 	return tx.Commit()
 }
 
@@ -179,4 +216,28 @@ func (s *Store) SumBalanceFromTransactions(walletID uuid.UUID) (map[string]float
 	}
 
 	return balances, nil
+}
+
+func (s *Store) recordTransaction(
+	tx *sql.Tx,
+	requestID uuid.UUID,
+	operation string,
+	fromWallet, toWallet *uuid.UUID,
+	amount float64,
+	currency string,
+	status string,
+) (bool, error) {
+	result, err := tx.Exec(
+		`INSERT INTO transactions (request_id, operation, from_wallet, to_wallet, amount, currency, status) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(request_id) DO NOTHING`,
+		requestID, operation, fromWallet, toWallet, amount, currency, status,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return rows == 0, nil
 }
