@@ -14,8 +14,8 @@ type BalanceRequest struct {
 }
 
 type BalanceResponse struct {
-	WalletID uuid.UUID          `json:"wallet_id"`
-	Balances map[string]float64 `json:"balances"`
+	WalletID uuid.UUID         `json:"wallet_id"`
+	Balances map[string]string `json:"balances"`
 }
 
 func HandleBalance(store *storage.Store) natsgo.MsgHandler {

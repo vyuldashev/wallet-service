@@ -25,14 +25,14 @@ func TestIdempotentDeposit(t *testing.T) {
 
 	requestID := uuid.New()
 
-	err = store.Deposit(requestID, walletID, 100, currency)
+	err = store.Deposit(requestID, walletID, "100", currency)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = store.Deposit(requestID, walletID, 100, currency)
-	if err != nil {
-		t.Fatal(err)
+	err = store.Deposit(requestID, walletID, "100", currency)
+	if err == nil || err.Error() != "duplicate request_id: transaction already processed" {
+		t.Fatalf("expected duplicate request_id: transaction already processed, got %v", err)
 	}
 
 	balances, err := store.GetWalletBalances(walletID)
@@ -40,8 +40,8 @@ func TestIdempotentDeposit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if balances[currency] != 100 {
-		t.Fatalf("expected 100 balance, got %f", balances[currency])
+	if balances[currency] != "100.0000" {
+		t.Fatalf("expected 100 balance, got %s", balances[currency])
 	}
 }
 
@@ -83,7 +83,7 @@ func TestConcurrentWithdraw(t *testing.T) {
 
 	for range 2 {
 		wg.Go(func() {
-			results <- store.Withdraw(uuid.New(), walletID, 80, currency)
+			results <- store.Withdraw(uuid.New(), walletID, "80", currency)
 		})
 	}
 
@@ -128,8 +128,8 @@ func TestConcurrentWithdraw(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if successes != 1 || balances[currency] != 20 {
-		t.Fatalf("expected 1 success and 20 balance, got %d and %f", successes, balances[currency])
+	if successes != 1 || balances[currency] != "20.0000" {
+		t.Fatalf("expected 1 success and 20 balance, got %d and %s", successes, balances[currency])
 	}
 }
 
@@ -176,7 +176,7 @@ func TestConcurrentTransfer(t *testing.T) {
 
 	for range 2 {
 		wg.Go(func() {
-			results <- store.Transfer(uuid.New(), srcWallet, dstWallet, 80, currency)
+			results <- store.Transfer(uuid.New(), srcWallet, dstWallet, "80", currency)
 		})
 	}
 
@@ -226,8 +226,8 @@ func TestConcurrentTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if successes != 1 || srcBalances[currency] != 20 || dstBalances[currency] != 80 {
-		t.Fatalf("expected 1 success, 20 balance for source wallet and 80 balance for destination wallet, got %d, %f and %f", successes, srcBalances[currency], dstBalances[currency])
+	if successes != 1 || srcBalances[currency] != "20.0000" || dstBalances[currency] != "80.0000" {
+		t.Fatalf("expected 1 success, 20 balance for source wallet and 80 balance for destination wallet, got %d, %s and %s", successes, srcBalances[currency], dstBalances[currency])
 	}
 }
 
@@ -266,7 +266,7 @@ func TestSuccessfulTransfer(t *testing.T) {
 		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
 	})
 
-	if err := store.Transfer(uuid.New(), srcWallet, dstWallet, 100, currency); err != nil {
+	if err := store.Transfer(uuid.New(), srcWallet, dstWallet, "100", currency); err != nil {
 		t.Fatal(err)
 	}
 
@@ -280,12 +280,12 @@ func TestSuccessfulTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if srcBalances[currency] != 0 || dstBalances[currency] != 100 {
-		t.Fatalf("expected 0 balance for source wallet and 100 balance for destination wallet, got %f and %f", srcBalances[currency], dstBalances[currency])
+	if srcBalances[currency] != "0.0000" || dstBalances[currency] != "100.0000" {
+		t.Fatalf("expected 0 balance for source wallet and 100 balance for destination wallet, got %s and %s", srcBalances[currency], dstBalances[currency])
 	}
 
-	if srcBalances["EUR"] != 50 || dstBalances["EUR"] != 0 {
-		t.Fatalf("expected 50 EUR and 0 EUR, got %f and %f", srcBalances["EUR"], dstBalances["EUR"])
+	if srcBalances["EUR"] != "50.0000" || dstBalances["EUR"] != "0.0000" {
+		t.Fatalf("expected 50 EUR and 0 EUR, got %s and %s", srcBalances["EUR"], dstBalances["EUR"])
 	}
 }
 
@@ -311,7 +311,7 @@ func TestInsufficientFundsForTransfer(t *testing.T) {
 		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
 	})
 
-	err = store.Transfer(uuid.New(), srcWallet, dstWallet, 200, currency)
+	err = store.Transfer(uuid.New(), srcWallet, dstWallet, "200", currency)
 
 	if err == nil {
 		t.Fatal("expected insufficient funds error")
@@ -353,7 +353,7 @@ func TestInsufficientFundsWithAnotherCurrencyForTransfer(t *testing.T) {
 		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
 	})
 
-	err = store.Transfer(uuid.New(), srcWallet, dstWallet, 200, "EUR")
+	err = store.Transfer(uuid.New(), srcWallet, dstWallet, "200", "EUR")
 
 	if err == nil {
 		t.Fatal("expected insufficient funds error")
@@ -368,7 +368,7 @@ func TestInsufficientFundsWithAnotherCurrencyForTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if balances["USD"] != 100 || balances["EUR"] != 50 {
-		t.Fatalf("expected 100 USD and 50 EUR, got %f and %f", balances["USD"], balances["EUR"])
+	if balances["USD"] != "100.0000" || balances["EUR"] != "50.0000" {
+		t.Fatalf("expected 100 USD and 50 EUR, got %s and %s", balances["USD"], balances["EUR"])
 	}
 }

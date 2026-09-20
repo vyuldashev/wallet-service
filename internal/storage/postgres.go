@@ -33,18 +33,18 @@ func (s *Store) Close() error {
 	return s.DB.Close()
 }
 
-func (s *Store) GetWalletBalances(walletID uuid.UUID) (map[string]float64, error) {
+func (s *Store) GetWalletBalances(walletID uuid.UUID) (map[string]string, error) {
 	rows, err := s.DB.Query(`SELECT balance, currency FROM wallets WHERE wallet_id = $1`, walletID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	balances := make(map[string]float64)
+	balances := make(map[string]string)
 
 	for rows.Next() {
 		var currency string
-		var balance float64
+		var balance string
 		if err := rows.Scan(&balance, &currency); err != nil {
 			return nil, err
 		}
@@ -59,7 +59,7 @@ func (s *Store) GetWalletBalances(walletID uuid.UUID) (map[string]float64, error
 	return balances, nil
 }
 
-func (s *Store) Deposit(requestID, walletID uuid.UUID, amount float64, currency string) error {
+func (s *Store) Deposit(requestID, walletID uuid.UUID, amount string, currency string) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
@@ -89,7 +89,7 @@ func (s *Store) Deposit(requestID, walletID uuid.UUID, amount float64, currency 
 	return tx.Commit()
 }
 
-func (s *Store) Withdraw(requestID, walletID uuid.UUID, amount float64, currency string) error {
+func (s *Store) Withdraw(requestID, walletID uuid.UUID, amount string, currency string) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
@@ -122,7 +122,7 @@ func (s *Store) Withdraw(requestID, walletID uuid.UUID, amount float64, currency
 	return tx.Commit()
 }
 
-func (s *Store) Transfer(requestID, fromWallet, toWallet uuid.UUID, amount float64, currency string) error {
+func (s *Store) Transfer(requestID, fromWallet, toWallet uuid.UUID, amount string, currency string) error {
 	if fromWallet == toWallet {
 		return fmt.Errorf("cannot transfer to the same wallet")
 	}
@@ -142,7 +142,7 @@ func (s *Store) Transfer(requestID, fromWallet, toWallet uuid.UUID, amount float
 		return errDuplicateRequestID
 	}
 
-	rows, err := tx.Query("SELECT wallet_id, balance FROM wallets WHERE wallet_id IN($1, $2) AND currency = $3 ORDER BY wallet_id FOR UPDATE", fromWallet, toWallet, currency)
+	rows, err := tx.Query("SELECT wallet_id FROM wallets WHERE wallet_id IN($1, $2) AND currency = $3 ORDER BY wallet_id FOR UPDATE", fromWallet, toWallet, currency)
 	if err != nil {
 		return err
 	}
@@ -153,16 +153,12 @@ func (s *Store) Transfer(requestID, fromWallet, toWallet uuid.UUID, amount float
 
 	for rows.Next() {
 		var walletID uuid.UUID
-		var balance float64
-		if err := rows.Scan(&walletID, &balance); err != nil {
+		if err := rows.Scan(&walletID); err != nil {
 			return err
 		}
 
 		if walletID == fromWallet {
 			hasFrom = true
-			if balance < amount {
-				return fmt.Errorf("insufficient funds")
-			}
 		}
 
 		if walletID == toWallet {
@@ -178,10 +174,18 @@ func (s *Store) Transfer(requestID, fromWallet, toWallet uuid.UUID, amount float
 		return fmt.Errorf("insufficient funds")
 	}
 
-	_, err = tx.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND currency = $3", amount, fromWallet, currency)
+	result, err := tx.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND currency = $3 AND balance >= $1::numeric", amount, fromWallet, currency)
 	if err != nil {
 		return err
 	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("insufficient funds")
+	}
+
 	_, err = tx.Exec("UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE wallet_id = $2 AND currency = $3", amount, toWallet, currency)
 	if err != nil {
 		return err
@@ -190,7 +194,7 @@ func (s *Store) Transfer(requestID, fromWallet, toWallet uuid.UUID, amount float
 	return tx.Commit()
 }
 
-func (s *Store) SumBalanceFromTransactions(walletID uuid.UUID) (map[string]float64, error) {
+func (s *Store) SumBalanceFromTransactions(walletID uuid.UUID) (map[string]string, error) {
 	rows, err := s.DB.Query(`
 		SELECT currency, COALESCE(
 			SUM(CASE WHEN to_wallet = $1 THEN amount ELSE 0 END) -
@@ -205,10 +209,10 @@ func (s *Store) SumBalanceFromTransactions(walletID uuid.UUID) (map[string]float
 	}
 	defer rows.Close()
 
-	balances := make(map[string]float64)
+	balances := make(map[string]string)
 	for rows.Next() {
 		var currency string
-		var balance float64
+		var balance string
 		if err := rows.Scan(&currency, &balance); err != nil {
 			return nil, err
 		}
@@ -228,7 +232,7 @@ func (s *Store) recordTransaction(
 	requestID uuid.UUID,
 	operation string,
 	fromWallet, toWallet *uuid.UUID,
-	amount float64,
+	amount string,
 	currency string,
 	status string,
 ) (bool, error) {

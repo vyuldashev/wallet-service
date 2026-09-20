@@ -11,10 +11,10 @@ import (
 )
 
 type WithdrawRequest struct {
-	RequestID uuid.UUID `json:"request_id"`
-	WalletID  uuid.UUID `json:"wallet_id"`
-	Amount    float64   `json:"amount"`
-	Currency  string    `json:"currency"`
+	RequestID uuid.UUID   `json:"request_id"`
+	WalletID  uuid.UUID   `json:"wallet_id"`
+	Amount    json.Number `json:"amount"`
+	Currency  string      `json:"currency"`
 }
 
 func HandleWithdraw(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
@@ -30,7 +30,8 @@ func HandleWithdraw(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
 			return
 		}
 
-		if err := validateAmount(req.Amount); err != nil {
+		amount, err := normalizeAmount(req.Amount)
+		if err != nil {
 			fmt.Println("withdraw: bad amount:", err)
 			return
 		}
@@ -41,7 +42,7 @@ func HandleWithdraw(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
 			return
 		}
 
-		if err := store.Withdraw(req.RequestID, req.WalletID, req.Amount, currency); err != nil {
+		if err := store.Withdraw(req.RequestID, req.WalletID, amount, currency); err != nil {
 			fmt.Println("withdraw failed:", err)
 			publishFailed(nc, req.RequestID, "withdraw", err.Error())
 			return
