@@ -25,7 +25,18 @@ func HandleWithdraw(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
 			return
 		}
 
-		if err := store.Withdraw(req.WalletID, req.Amount); err != nil {
+		if err := validateAmount(req.Amount); err != nil {
+			fmt.Println("withdraw: bad amount:", err)
+			return
+		}
+
+		currency, err := normalizeCurrency(req.Currency)
+		if err != nil {
+			fmt.Println("withdraw: bad currency:", err)
+			return
+		}
+
+		if err := store.Withdraw(req.WalletID, req.Amount, currency); err != nil {
 			fmt.Println("withdraw failed:", err)
 			publishFailed(nc, req.RequestID, "withdraw", err.Error())
 			return
@@ -34,7 +45,7 @@ func HandleWithdraw(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
 		publishCompleted(nc, req.RequestID, "withdraw")
 
 		fromWallet := req.WalletID
-		if err := store.RecordTransaction(req.RequestID, "withdraw", &fromWallet, nil, req.Amount, "completed"); err != nil {
+		if err := store.RecordTransaction(req.RequestID, "withdraw", &fromWallet, nil, req.Amount, currency, "completed"); err != nil {
 			fmt.Println("withdraw: failed to record transaction:", err)
 		}
 	}

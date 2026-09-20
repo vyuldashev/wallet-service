@@ -14,9 +14,8 @@ type BalanceRequest struct {
 }
 
 type BalanceResponse struct {
-	WalletID uuid.UUID `json:"wallet_id"`
-	Balance  float64   `json:"balance"`
-	Currency string    `json:"currency"`
+	WalletID uuid.UUID          `json:"wallet_id"`
+	Balances map[string]float64 `json:"balances"`
 }
 
 func HandleBalance(store *storage.Store) natsgo.MsgHandler {
@@ -27,22 +26,15 @@ func HandleBalance(store *storage.Store) natsgo.MsgHandler {
 			return
 		}
 
-		_, currency, err := store.GetWalletBalance(req.WalletID)
+		balances, err := store.GetWalletBalances(req.WalletID)
 		if err != nil {
 			fmt.Println("balance: wallet lookup failed:", err)
 			return
 		}
 
-		balance, err := store.SumBalanceFromTransactions(req.WalletID)
-		if err != nil {
-			fmt.Println("balance: query failed:", err)
-			return
-		}
-
 		resp := BalanceResponse{
 			WalletID: req.WalletID,
-			Balance:  balance,
-			Currency: currency,
+			Balances: balances,
 		}
 		data, _ := json.Marshal(resp)
 		msg.Respond(data)

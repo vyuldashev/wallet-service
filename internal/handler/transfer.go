@@ -26,7 +26,18 @@ func HandleTransfer(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
 			return
 		}
 
-		if err := store.Transfer(req.FromWalletID, req.ToWalletID, req.Amount); err != nil {
+		if err := validateAmount(req.Amount); err != nil {
+			fmt.Println("transfer: bad amount:", err)
+			return
+		}
+
+		currency, err := normalizeCurrency(req.Currency)
+		if err != nil {
+			fmt.Println("transfer: bad currency:", err)
+			return
+		}
+
+		if err := store.Transfer(req.FromWalletID, req.ToWalletID, req.Amount, currency); err != nil {
 			fmt.Println("transfer failed:", err)
 			publishFailed(nc, req.RequestID, "transfer", err.Error())
 			return
@@ -34,7 +45,7 @@ func HandleTransfer(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {
 
 		publishCompleted(nc, req.RequestID, "transfer")
 
-		if err := store.RecordTransaction(req.RequestID, "transfer", &req.FromWalletID, &req.ToWalletID, req.Amount, "completed"); err != nil {
+		if err := store.RecordTransaction(req.RequestID, "transfer", &req.FromWalletID, &req.ToWalletID, req.Amount, currency, "completed"); err != nil {
 			fmt.Println("transfer: failed to record transaction:", err)
 		}
 	}

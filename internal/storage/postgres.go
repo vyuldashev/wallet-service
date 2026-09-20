@@ -3,7 +3,6 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"math"
 	"sync"
 
 	"github.com/google/uuid"
@@ -31,41 +30,52 @@ func (s *Store) Close() error {
 	return s.DB.Close()
 }
 
-func (s *Store) GetWalletBalance(walletID uuid.UUID) (float64, string, error) {
-	var balance float64
-	var currency string
-	err := s.DB.QueryRow(`SELECT balance, currency FROM wallets WHERE wallet_id = $1`, walletID).Scan(&balance, &currency)
-	return balance, currency, err
+func (s *Store) GetWalletBalances(walletID uuid.UUID) (map[string]float64, error) {
+	rows, err := s.DB.Query(`SELECT balance, currency FROM wallets WHERE wallet_id = $1`, walletID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	balances := make(map[string]float64)
+
+	for rows.Next() {
+		var currency string
+		var balance float64
+		if err := rows.Scan(&balance, &currency); err != nil {
+			return nil, err
+		}
+
+		balances[currency] = balance
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return balances, nil
 }
 
-func (s *Store) RecordTransaction(requestID, operation string, fromWallet, toWallet *uuid.UUID, amount float64, status string) error {
+func (s *Store) RecordTransaction(requestID, operation string, fromWallet, toWallet *uuid.UUID, amount float64, currency string, status string) error {
 	_, err := s.DB.Exec(
-		`INSERT INTO transactions (request_id, operation, from_wallet, to_wallet, amount, status) VALUES ($1, $2, $3, $4, $5, $6)`,
-		requestID, operation, fromWallet, toWallet, amount, status,
+		`INSERT INTO transactions (request_id, operation, from_wallet, to_wallet, amount, currency, status) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		requestID, operation, fromWallet, toWallet, amount, currency, status,
 	)
 	return err
 }
 
-func (s *Store) Deposit(walletID uuid.UUID, amount float64) error {
-	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
-		return fmt.Errorf("invalid amount")
-	}
-
+func (s *Store) Deposit(walletID uuid.UUID, amount float64, currency string) error {
 	_, err := s.DB.Exec(`
-		INSERT INTO wallets (wallet_id, balance)
-		VALUES ($1, $2)
-		ON CONFLICT (wallet_id)
+		INSERT INTO wallets (wallet_id, balance, currency)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (wallet_id, currency)
 		DO UPDATE SET balance = wallets.balance + EXCLUDED.balance, updated_at = NOW()
-	`, walletID, amount)
+	`, walletID, amount, currency)
 	return err
 }
 
-func (s *Store) Withdraw(walletID uuid.UUID, amount float64) error {
-	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
-		return fmt.Errorf("invalid amount")
-	}
-
-	result, err := s.DB.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND balance >= $1", amount, walletID)
+func (s *Store) Withdraw(walletID uuid.UUID, amount float64, currency string) error {
+	result, err := s.DB.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND currency = $3 AND balance >= $1", amount, walletID, currency)
 	if err != nil {
 		return err
 	}
@@ -82,13 +92,9 @@ func (s *Store) Withdraw(walletID uuid.UUID, amount float64) error {
 	return nil
 }
 
-func (s *Store) Transfer(fromWallet, toWallet uuid.UUID, amount float64) error {
+func (s *Store) Transfer(fromWallet, toWallet uuid.UUID, amount float64, currency string) error {
 	if fromWallet == toWallet {
 		return fmt.Errorf("cannot transfer to the same wallet")
-	}
-
-	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
-		return fmt.Errorf("invalid amount")
 	}
 
 	tx, err := s.DB.Begin()
@@ -97,7 +103,7 @@ func (s *Store) Transfer(fromWallet, toWallet uuid.UUID, amount float64) error {
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.Query("SELECT wallet_id, balance FROM wallets WHERE wallet_id IN($1, $2) ORDER BY wallet_id FOR UPDATE", fromWallet, toWallet)
+	rows, err := tx.Query("SELECT wallet_id, balance FROM wallets WHERE wallet_id IN($1, $2) AND currency = $3 ORDER BY wallet_id FOR UPDATE", fromWallet, toWallet, currency)
 	if err != nil {
 		return err
 	}
@@ -125,33 +131,54 @@ func (s *Store) Transfer(fromWallet, toWallet uuid.UUID, amount float64) error {
 		}
 	}
 
-	if rows.Err() != nil {
-		return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
 	}
 
 	if !hasFrom || !hasTo {
 		return fmt.Errorf("insufficient funds")
 	}
 
-	_, err = tx.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2", amount, fromWallet)
+	_, err = tx.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND currency = $3", amount, fromWallet, currency)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec("UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE wallet_id = $2", amount, toWallet)
+	_, err = tx.Exec("UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE wallet_id = $2 AND currency = $3", amount, toWallet, currency)
 	if err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Store) SumBalanceFromTransactions(walletID uuid.UUID) (float64, error) {
-	var balance float64
-	err := s.DB.QueryRow(`
-		SELECT COALESCE(
+func (s *Store) SumBalanceFromTransactions(walletID uuid.UUID) (map[string]float64, error) {
+	rows, err := s.DB.Query(`
+		SELECT currency, COALESCE(
 			SUM(CASE WHEN to_wallet = $1 THEN amount ELSE 0 END) -
 			SUM(CASE WHEN from_wallet = $1 THEN amount ELSE 0 END),
 		0)
-		FROM transactions WHERE from_wallet = $1 OR to_wallet = $1
-	`, walletID).Scan(&balance)
-	return balance, err
+		FROM transactions WHERE status = 'completed' AND (from_wallet = $1 OR to_wallet = $1)
+		GROUP BY currency
+	`, walletID)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	balances := make(map[string]float64)
+	for rows.Next() {
+		var currency string
+		var balance float64
+		if err := rows.Scan(&currency, &balance); err != nil {
+			return nil, err
+		}
+
+		balances[currency] = balance
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return balances, nil
 }

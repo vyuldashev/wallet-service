@@ -13,8 +13,9 @@ func TestConcurrentWithdraw(t *testing.T) {
 	store := newTestStore(t)
 
 	walletID := uuid.MustParse("00000000-0000-0000-0000-000000000000")
+	currency := "USD"
 
-	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 100) ON CONFLICT (wallet_id) DO UPDATE SET balance = 100", walletID)
+	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 100, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 100", walletID, currency)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +38,7 @@ func TestConcurrentWithdraw(t *testing.T) {
 	}()
 
 	var lockedBalance float64
-	err = tx.QueryRowContext(t.Context(), "SELECT balance FROM wallets WHERE wallet_id = $1 FOR UPDATE", walletID).Scan(&lockedBalance)
+	err = tx.QueryRowContext(t.Context(), "SELECT balance FROM wallets WHERE wallet_id = $1 AND currency = $2 FOR UPDATE", walletID, currency).Scan(&lockedBalance)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +47,7 @@ func TestConcurrentWithdraw(t *testing.T) {
 
 	for range 2 {
 		wg.Go(func() {
-			results <- store.Withdraw(walletID, 80)
+			results <- store.Withdraw(walletID, 80, currency)
 		})
 	}
 
@@ -86,13 +87,13 @@ func TestConcurrentWithdraw(t *testing.T) {
 		successes++
 	}
 
-	balance, _, err := store.GetWalletBalance(walletID)
+	balances, err := store.GetWalletBalances(walletID)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if successes != 1 || balance != 20 {
-		t.Fatalf("expected 1 success and 20 balance, got %d and %f", successes, balance)
+	if successes != 1 || balances[currency] != 20 {
+		t.Fatalf("expected 1 success and 20 balance, got %d and %f", successes, balances[currency])
 	}
 }
 
@@ -101,13 +102,14 @@ func TestConcurrentTransfer(t *testing.T) {
 
 	srcWallet := uuid.MustParse("00000000-0000-0000-0000-000000000000")
 	dstWallet := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	currency := "USD"
 
-	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 100) ON CONFLICT (wallet_id) DO UPDATE SET balance = 100", srcWallet)
+	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 100, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 100", srcWallet, currency)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 0) ON CONFLICT (wallet_id) DO UPDATE SET balance = 0", dstWallet)
+	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 0, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 0", dstWallet, currency)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +131,7 @@ func TestConcurrentTransfer(t *testing.T) {
 	}()
 
 	var lockedBalance float64
-	err = tx.QueryRowContext(t.Context(), "SELECT balance FROM wallets WHERE wallet_id = $1 FOR UPDATE", srcWallet).Scan(&lockedBalance)
+	err = tx.QueryRowContext(t.Context(), "SELECT balance FROM wallets WHERE wallet_id = $1 AND currency = $2 FOR UPDATE", srcWallet, currency).Scan(&lockedBalance)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +140,7 @@ func TestConcurrentTransfer(t *testing.T) {
 
 	for range 2 {
 		wg.Go(func() {
-			results <- store.Transfer(srcWallet, dstWallet, 80)
+			results <- store.Transfer(srcWallet, dstWallet, 80, currency)
 		})
 	}
 
@@ -178,33 +180,47 @@ func TestConcurrentTransfer(t *testing.T) {
 		successes++
 	}
 
-	srcBalance, _, err := store.GetWalletBalance(srcWallet)
+	srcBalances, err := store.GetWalletBalances(srcWallet)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	dstBalance, _, err := store.GetWalletBalance(dstWallet)
+	dstBalances, err := store.GetWalletBalances(dstWallet)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if successes != 1 || srcBalance != 20 || dstBalance != 80 {
-		t.Fatalf("expected 1 success, 20 balance for source wallet and 80 balance for destination wallet, got %d, %f and %f", successes, srcBalance, dstBalance)
+	if successes != 1 || srcBalances[currency] != 20 || dstBalances[currency] != 80 {
+		t.Fatalf("expected 1 success, 20 balance for source wallet and 80 balance for destination wallet, got %d, %f and %f", successes, srcBalances[currency], dstBalances[currency])
 	}
 }
 
 func TestSuccessfulTransfer(t *testing.T) {
 	store := newTestStore(t)
 
+	// source USD=100 EUR=50
+	// destination USD=0 EUR=0
+	// transfer 100 USD
+
 	srcWallet := uuid.MustParse("00000000-0000-0000-0000-000000000000")
 	dstWallet := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	currency := "USD"
 
-	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 100) ON CONFLICT (wallet_id) DO UPDATE SET balance = 100", srcWallet)
+	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 100, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 100", srcWallet, currency)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 0) ON CONFLICT (wallet_id) DO UPDATE SET balance = 0", dstWallet)
+	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 50, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 50", srcWallet, "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 0, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 0", dstWallet, currency)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 0, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 0", dstWallet, "EUR")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,22 +230,26 @@ func TestSuccessfulTransfer(t *testing.T) {
 		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
 	})
 
-	if err := store.Transfer(srcWallet, dstWallet, 100); err != nil {
+	if err := store.Transfer(srcWallet, dstWallet, 100, currency); err != nil {
 		t.Fatal(err)
 	}
 
-	srcBalance, _, err := store.GetWalletBalance(srcWallet)
+	srcBalances, err := store.GetWalletBalances(srcWallet)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	dstBalance, _, err := store.GetWalletBalance(dstWallet)
+	dstBalances, err := store.GetWalletBalances(dstWallet)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if srcBalance != 0 || dstBalance != 100 {
-		t.Fatalf("expected 0 balance for source wallet and 100 balance for destination wallet, got %f and %f", srcBalance, dstBalance)
+	if srcBalances[currency] != 0 || dstBalances[currency] != 100 {
+		t.Fatalf("expected 0 balance for source wallet and 100 balance for destination wallet, got %f and %f", srcBalances[currency], dstBalances[currency])
+	}
+
+	if srcBalances["EUR"] != 50 || dstBalances["EUR"] != 0 {
+		t.Fatalf("expected 50 EUR and 0 EUR, got %f and %f", srcBalances["EUR"], dstBalances["EUR"])
 	}
 }
 
@@ -238,13 +258,14 @@ func TestInsufficientFundsForTransfer(t *testing.T) {
 
 	srcWallet := uuid.MustParse("00000000-0000-0000-0000-000000000000")
 	dstWallet := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	currency := "USD"
 
-	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 100) ON CONFLICT (wallet_id) DO UPDATE SET balance = 100", srcWallet)
+	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 100, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 100", srcWallet, currency)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 0) ON CONFLICT (wallet_id) DO UPDATE SET balance = 0", dstWallet)
+	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 0, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 0", dstWallet, currency)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +275,7 @@ func TestInsufficientFundsForTransfer(t *testing.T) {
 		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
 	})
 
-	err = store.Transfer(srcWallet, dstWallet, 200)
+	err = store.Transfer(srcWallet, dstWallet, 200, currency)
 
 	if err == nil {
 		t.Fatal("expected insufficient funds error")
@@ -262,5 +283,56 @@ func TestInsufficientFundsForTransfer(t *testing.T) {
 
 	if err.Error() != "insufficient funds" {
 		t.Fatalf("expected insufficient funds error, got %v", err)
+	}
+}
+
+func TestInsufficientFundsWithAnotherCurrencyForTransfer(t *testing.T) {
+	store := newTestStore(t)
+
+	// source USD=100 EUR=50
+	// destination USD=0 EUR=0
+	// transfer 80 USD
+
+	srcWallet := uuid.MustParse("00000000-0000-0000-0000-000000000000")
+	dstWallet := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	currency := "USD"
+
+	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 100, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 100", srcWallet, currency)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 50, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 50", srcWallet, "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance, currency) VALUES($1, 0, $2) ON CONFLICT (wallet_id, currency) DO UPDATE SET balance = 0", dstWallet, currency)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, srcWallet)
+		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
+	})
+
+	err = store.Transfer(srcWallet, dstWallet, 200, "EUR")
+
+	if err == nil {
+		t.Fatal("expected insufficient funds error")
+	}
+
+	if err.Error() != "insufficient funds" {
+		t.Fatalf("expected insufficient funds error, got %v", err)
+	}
+
+	balances, err := store.GetWalletBalances(srcWallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if balances["USD"] != 100 || balances["EUR"] != 50 {
+		t.Fatalf("expected 100 USD and 50 EUR, got %f and %f", balances["USD"], balances["EUR"])
 	}
 }
