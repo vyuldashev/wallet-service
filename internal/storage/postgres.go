@@ -3,8 +3,10 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"sync"
 
+	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 )
 
@@ -73,20 +75,73 @@ func (s *Store) Withdraw(walletID string, amount float64) error {
 }
 
 func (s *Store) Transfer(fromWallet, toWallet string, amount float64) error {
-	var balance float64
-	if err := s.DB.QueryRow(`SELECT balance FROM wallets WHERE wallet_id = $1`, fromWallet).Scan(&balance); err != nil {
+	fromID, err := uuid.Parse(fromWallet)
+	if err != nil {
 		return err
 	}
-	if balance < amount {
+	toID, err := uuid.Parse(toWallet)
+	if err != nil {
+		return err
+	}
+	if fromID == toID {
+		return fmt.Errorf("cannot transfer to the same wallet")
+	}
+
+	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return fmt.Errorf("invalid amount")
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query("SELECT wallet_id, balance FROM wallets WHERE wallet_id IN($1, $2) ORDER BY wallet_id FOR UPDATE", fromID, toID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasFrom := false
+	hasTo := false
+
+	for rows.Next() {
+		var walletID uuid.UUID
+		var balance float64
+		if err := rows.Scan(&walletID, &balance); err != nil {
+			return err
+		}
+
+		if walletID == fromID {
+			hasFrom = true
+			if balance < amount {
+				return fmt.Errorf("insufficient funds")
+			}
+		}
+
+		if walletID == toID {
+			hasTo = true
+		}
+	}
+
+	if rows.Err() != nil {
+		return rows.Err()
+	}
+
+	if !hasFrom || !hasTo {
 		return fmt.Errorf("insufficient funds")
 	}
-	if _, err := s.DB.Exec(`UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2`, amount, fromWallet); err != nil {
+
+	_, err = tx.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2", amount, fromID)
+	if err != nil {
 		return err
 	}
-	if _, err := s.DB.Exec(`UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE wallet_id = $2`, amount, toWallet); err != nil {
+	_, err = tx.Exec("UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE wallet_id = $2", amount, toID)
+	if err != nil {
 		return err
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) SumBalanceFromTransactions(walletID string) (float64, error) {

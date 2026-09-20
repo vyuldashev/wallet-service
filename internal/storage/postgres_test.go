@@ -111,9 +111,8 @@ func TestConcurrentTransfer(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		_, _ = store.DB.Exec(
-			`DELETE FROM wallets WHERE wallet_id = $1`, srcWallet,
-		)
+		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, srcWallet)
+		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
 	})
 
 	var wg sync.WaitGroup
@@ -189,5 +188,77 @@ func TestConcurrentTransfer(t *testing.T) {
 
 	if successes != 1 || srcBalance != 20 || dstBalance != 80 {
 		t.Fatalf("expected 1 success, 20 balance for source wallet and 80 balance for destination wallet, got %d, %f and %f", successes, srcBalance, dstBalance)
+	}
+}
+
+func TestSuccessfulTransfer(t *testing.T) {
+	store := newTestStore(t)
+
+	srcWallet := "00000000-0000-0000-0000-000000000000"
+	dstWallet := "11111111-1111-1111-1111-111111111111"
+
+	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 100) ON CONFLICT (wallet_id) DO UPDATE SET balance = 100", srcWallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 0) ON CONFLICT (wallet_id) DO UPDATE SET balance = 0", dstWallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, srcWallet)
+		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
+	})
+
+	if err := store.Transfer(srcWallet, dstWallet, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	srcBalance, _, err := store.GetWalletBalance(srcWallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dstBalance, _, err := store.GetWalletBalance(dstWallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if srcBalance != 0 || dstBalance != 100 {
+		t.Fatalf("expected 0 balance for source wallet and 100 balance for destination wallet, got %f and %f", srcBalance, dstBalance)
+	}
+}
+
+func TestInsufficientFundsForTransfer(t *testing.T) {
+	store := newTestStore(t)
+
+	srcWallet := "00000000-0000-0000-0000-000000000000"
+	dstWallet := "11111111-1111-1111-1111-111111111111"
+
+	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 100) ON CONFLICT (wallet_id) DO UPDATE SET balance = 100", srcWallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 0) ON CONFLICT (wallet_id) DO UPDATE SET balance = 0", dstWallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, srcWallet)
+		_, _ = store.DB.Exec(`DELETE FROM wallets WHERE wallet_id = $1`, dstWallet)
+	})
+
+	err = store.Transfer(srcWallet, dstWallet, 200)
+
+	if err == nil {
+		t.Fatal("expected insufficient funds error")
+	}
+
+	if err.Error() != "insufficient funds" {
+		t.Fatalf("expected insufficient funds error, got %v", err)
 	}
 }
