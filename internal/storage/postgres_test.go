@@ -53,6 +53,12 @@ func TestConcurrentWithdraw(t *testing.T) {
 	for {
 		var blocked int
 
+		select {
+		case err := <-results:
+			t.Fatalf("withdraw failed: %v", err)
+		default:
+		}
+
 		err := store.DB.QueryRowContext(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&blocked)
 		if err != nil {
 			t.Fatalf("waiting for two blocked withdrawals: %v", err)

@@ -55,15 +55,21 @@ func (s *Store) Deposit(walletID string, amount float64) error {
 }
 
 func (s *Store) Withdraw(walletID string, amount float64) error {
-	var balance float64
-	if err := s.DB.QueryRow(`SELECT balance FROM wallets WHERE wallet_id = $1`, walletID).Scan(&balance); err != nil {
+	result, err := s.DB.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND balance >= $1", amount, walletID)
+	if err != nil {
 		return err
 	}
-	if balance < amount {
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rows == 0 {
 		return fmt.Errorf("insufficient funds")
 	}
-	_, err := s.DB.Exec(`UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2`, amount, walletID)
-	return err
+
+	return nil
 }
 
 func (s *Store) Transfer(fromWallet, toWallet string, amount float64) error {
