@@ -2,10 +2,15 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
+)
+
+var (
+	errDuplicateRequestID = errors.New("duplicate request_id: transaction already processed")
 )
 
 type Store struct {
@@ -67,7 +72,7 @@ func (s *Store) Deposit(requestID, walletID uuid.UUID, amount float64, currency 
 	}
 
 	if alreadyProcessed {
-		return nil
+		return errDuplicateRequestID
 	}
 
 	_, err = tx.Exec(`
@@ -97,7 +102,7 @@ func (s *Store) Withdraw(requestID, walletID uuid.UUID, amount float64, currency
 	}
 
 	if alreadyProcessed {
-		return nil
+		return errDuplicateRequestID
 	}
 
 	result, err := tx.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND currency = $3 AND balance >= $1", amount, walletID, currency)
@@ -134,7 +139,7 @@ func (s *Store) Transfer(requestID, fromWallet, toWallet uuid.UUID, amount float
 	}
 
 	if alreadyProcessed {
-		return nil
+		return errDuplicateRequestID
 	}
 
 	rows, err := tx.Query("SELECT wallet_id, balance FROM wallets WHERE wallet_id IN($1, $2) AND currency = $3 ORDER BY wallet_id FOR UPDATE", fromWallet, toWallet, currency)
