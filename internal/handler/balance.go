@@ -5,17 +5,18 @@ import (
 	"fmt"
 
 	"github.com/fundingpips/wallet-service/internal/storage"
+	"github.com/google/uuid"
 	natsgo "github.com/nats-io/nats.go"
 )
 
 type BalanceRequest struct {
-	WalletID string `json:"wallet_id"`
+	WalletID uuid.UUID `json:"wallet_id"`
 }
 
 type BalanceResponse struct {
-	WalletID string  `json:"wallet_id"`
-	Balance  float64 `json:"balance"`
-	Currency string  `json:"currency"`
+	WalletID uuid.UUID `json:"wallet_id"`
+	Balance  float64   `json:"balance"`
+	Currency string    `json:"currency"`
 }
 
 func HandleBalance(store *storage.Store) natsgo.MsgHandler {

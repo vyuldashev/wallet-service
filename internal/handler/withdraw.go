@@ -6,14 +6,15 @@ import (
 
 	"github.com/fundingpips/wallet-service/internal/nats"
 	"github.com/fundingpips/wallet-service/internal/storage"
+	"github.com/google/uuid"
 	natsgo "github.com/nats-io/nats.go"
 )
 
 type WithdrawRequest struct {
-	RequestID string  `json:"request_id"`
-	WalletID  string  `json:"wallet_id"`
-	Amount    float64 `json:"amount"`
-	Currency  string  `json:"currency"`
+	RequestID string    `json:"request_id"`
+	WalletID  uuid.UUID `json:"wallet_id"`
+	Amount    float64   `json:"amount"`
+	Currency  string    `json:"currency"`
 }
 
 func HandleWithdraw(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {

@@ -6,15 +6,16 @@ import (
 
 	"github.com/fundingpips/wallet-service/internal/nats"
 	"github.com/fundingpips/wallet-service/internal/storage"
+	"github.com/google/uuid"
 	natsgo "github.com/nats-io/nats.go"
 )
 
 type TransferRequest struct {
-	RequestID    string  `json:"request_id"`
-	FromWalletID string  `json:"from_wallet_id"`
-	ToWalletID   string  `json:"to_wallet_id"`
-	Amount       float64 `json:"amount"`
-	Currency     string  `json:"currency"`
+	RequestID    string    `json:"request_id"`
+	FromWalletID uuid.UUID `json:"from_wallet_id"`
+	ToWalletID   uuid.UUID `json:"to_wallet_id"`
+	Amount       float64   `json:"amount"`
+	Currency     string    `json:"currency"`
 }
 
 func HandleTransfer(store *storage.Store, nc *nats.Client) natsgo.MsgHandler {

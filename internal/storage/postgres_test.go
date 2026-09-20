@@ -5,12 +5,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestConcurrentWithdraw(t *testing.T) {
 	store := newTestStore(t)
 
-	walletID := "00000000-0000-0000-0000-000000000000"
+	walletID := uuid.MustParse("00000000-0000-0000-0000-000000000000")
 
 	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 100) ON CONFLICT (wallet_id) DO UPDATE SET balance = 100", walletID)
 	if err != nil {
@@ -97,8 +99,8 @@ func TestConcurrentWithdraw(t *testing.T) {
 func TestConcurrentTransfer(t *testing.T) {
 	store := newTestStore(t)
 
-	srcWallet := "00000000-0000-0000-0000-000000000000"
-	dstWallet := "11111111-1111-1111-1111-111111111111"
+	srcWallet := uuid.MustParse("00000000-0000-0000-0000-000000000000")
+	dstWallet := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
 	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 100) ON CONFLICT (wallet_id) DO UPDATE SET balance = 100", srcWallet)
 	if err != nil {
@@ -194,8 +196,8 @@ func TestConcurrentTransfer(t *testing.T) {
 func TestSuccessfulTransfer(t *testing.T) {
 	store := newTestStore(t)
 
-	srcWallet := "00000000-0000-0000-0000-000000000000"
-	dstWallet := "11111111-1111-1111-1111-111111111111"
+	srcWallet := uuid.MustParse("00000000-0000-0000-0000-000000000000")
+	dstWallet := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
 	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 100) ON CONFLICT (wallet_id) DO UPDATE SET balance = 100", srcWallet)
 	if err != nil {
@@ -234,8 +236,8 @@ func TestSuccessfulTransfer(t *testing.T) {
 func TestInsufficientFundsForTransfer(t *testing.T) {
 	store := newTestStore(t)
 
-	srcWallet := "00000000-0000-0000-0000-000000000000"
-	dstWallet := "11111111-1111-1111-1111-111111111111"
+	srcWallet := uuid.MustParse("00000000-0000-0000-0000-000000000000")
+	dstWallet := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
 	_, err := store.DB.Exec("INSERT INTO wallets(wallet_id, balance) VALUES($1, 100) ON CONFLICT (wallet_id) DO UPDATE SET balance = 100", srcWallet)
 	if err != nil {

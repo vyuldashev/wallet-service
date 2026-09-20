@@ -31,14 +31,14 @@ func (s *Store) Close() error {
 	return s.DB.Close()
 }
 
-func (s *Store) GetWalletBalance(walletID string) (float64, string, error) {
+func (s *Store) GetWalletBalance(walletID uuid.UUID) (float64, string, error) {
 	var balance float64
 	var currency string
 	err := s.DB.QueryRow(`SELECT balance, currency FROM wallets WHERE wallet_id = $1`, walletID).Scan(&balance, &currency)
 	return balance, currency, err
 }
 
-func (s *Store) RecordTransaction(requestID, operation string, fromWallet, toWallet *string, amount float64, status string) error {
+func (s *Store) RecordTransaction(requestID, operation string, fromWallet, toWallet *uuid.UUID, amount float64, status string) error {
 	_, err := s.DB.Exec(
 		`INSERT INTO transactions (request_id, operation, from_wallet, to_wallet, amount, status) VALUES ($1, $2, $3, $4, $5, $6)`,
 		requestID, operation, fromWallet, toWallet, amount, status,
@@ -46,7 +46,7 @@ func (s *Store) RecordTransaction(requestID, operation string, fromWallet, toWal
 	return err
 }
 
-func (s *Store) Deposit(walletID string, amount float64) error {
+func (s *Store) Deposit(walletID uuid.UUID, amount float64) error {
 	_, err := s.DB.Exec(`
 		INSERT INTO wallets (wallet_id, balance)
 		VALUES ($1, $2)
@@ -56,7 +56,7 @@ func (s *Store) Deposit(walletID string, amount float64) error {
 	return err
 }
 
-func (s *Store) Withdraw(walletID string, amount float64) error {
+func (s *Store) Withdraw(walletID uuid.UUID, amount float64) error {
 	result, err := s.DB.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND balance >= $1", amount, walletID)
 	if err != nil {
 		return err
@@ -74,16 +74,8 @@ func (s *Store) Withdraw(walletID string, amount float64) error {
 	return nil
 }
 
-func (s *Store) Transfer(fromWallet, toWallet string, amount float64) error {
-	fromID, err := uuid.Parse(fromWallet)
-	if err != nil {
-		return err
-	}
-	toID, err := uuid.Parse(toWallet)
-	if err != nil {
-		return err
-	}
-	if fromID == toID {
+func (s *Store) Transfer(fromWallet, toWallet uuid.UUID, amount float64) error {
+	if fromWallet == toWallet {
 		return fmt.Errorf("cannot transfer to the same wallet")
 	}
 
@@ -97,7 +89,7 @@ func (s *Store) Transfer(fromWallet, toWallet string, amount float64) error {
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.Query("SELECT wallet_id, balance FROM wallets WHERE wallet_id IN($1, $2) ORDER BY wallet_id FOR UPDATE", fromID, toID)
+	rows, err := tx.Query("SELECT wallet_id, balance FROM wallets WHERE wallet_id IN($1, $2) ORDER BY wallet_id FOR UPDATE", fromWallet, toWallet)
 	if err != nil {
 		return err
 	}
@@ -113,14 +105,14 @@ func (s *Store) Transfer(fromWallet, toWallet string, amount float64) error {
 			return err
 		}
 
-		if walletID == fromID {
+		if walletID == fromWallet {
 			hasFrom = true
 			if balance < amount {
 				return fmt.Errorf("insufficient funds")
 			}
 		}
 
-		if walletID == toID {
+		if walletID == toWallet {
 			hasTo = true
 		}
 	}
@@ -133,18 +125,18 @@ func (s *Store) Transfer(fromWallet, toWallet string, amount float64) error {
 		return fmt.Errorf("insufficient funds")
 	}
 
-	_, err = tx.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2", amount, fromID)
+	_, err = tx.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2", amount, fromWallet)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec("UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE wallet_id = $2", amount, toID)
+	_, err = tx.Exec("UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE wallet_id = $2", amount, toWallet)
 	if err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Store) SumBalanceFromTransactions(walletID string) (float64, error) {
+func (s *Store) SumBalanceFromTransactions(walletID uuid.UUID) (float64, error) {
 	var balance float64
 	err := s.DB.QueryRow(`
 		SELECT COALESCE(
