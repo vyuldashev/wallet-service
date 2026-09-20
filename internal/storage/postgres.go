@@ -3,7 +3,6 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"sync"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -11,7 +10,6 @@ import (
 
 type Store struct {
 	DB *sql.DB
-	mu sync.Mutex
 }
 
 func NewStore(pgURL string) (*Store, error) {
