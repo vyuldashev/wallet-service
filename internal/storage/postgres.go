@@ -47,6 +47,10 @@ func (s *Store) RecordTransaction(requestID, operation string, fromWallet, toWal
 }
 
 func (s *Store) Deposit(walletID uuid.UUID, amount float64) error {
+	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return fmt.Errorf("invalid amount")
+	}
+
 	_, err := s.DB.Exec(`
 		INSERT INTO wallets (wallet_id, balance)
 		VALUES ($1, $2)
@@ -57,6 +61,10 @@ func (s *Store) Deposit(walletID uuid.UUID, amount float64) error {
 }
 
 func (s *Store) Withdraw(walletID uuid.UUID, amount float64) error {
+	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return fmt.Errorf("invalid amount")
+	}
+
 	result, err := s.DB.Exec("UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE wallet_id = $2 AND balance >= $1", amount, walletID)
 	if err != nil {
 		return err
